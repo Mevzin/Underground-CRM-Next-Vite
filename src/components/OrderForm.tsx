@@ -1,0 +1,155 @@
+"use client";
+
+import { useMemo, useState } from "react";
+
+type Client = {
+	_id: string;
+	name: string;
+};
+
+type Vehicle = {
+	_id: string;
+	clientId: string;
+	model: string;
+	vin: string;
+};
+
+function serviceLabel(type: string) {
+	if (type === "stage_installation") return "Instalação de stage";
+	if (type === "removal") return "Remoção";
+	if (type === "renewal") return "Renovação";
+	return type;
+}
+
+export function OrderForm({
+	clients,
+	vehicles,
+}: {
+	clients: Client[];
+	vehicles: Vehicle[];
+}) {
+	const [form, setForm] = useState({
+		clientId: clients[0]?._id || "",
+		vehicleId: "",
+		type: "stage_installation",
+		title: "Instalação de stage",
+		description: "",
+	});
+
+	const filteredVehicles = useMemo(
+		() => vehicles.filter((vehicle) => vehicle.clientId === form.clientId),
+		[vehicles, form.clientId],
+	);
+
+	async function handleSubmit(e: React.FormEvent) {
+		e.preventDefault();
+
+		const title = form.title.trim() || serviceLabel(form.type);
+
+		const res = await fetch("/api/orders", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				...form,
+				title,
+				vehicleId: form.vehicleId || null,
+			}),
+		});
+
+		const data = await res.json();
+
+		if (!res.ok) {
+			alert(data?.message || "Erro ao salvar registro");
+			return;
+		}
+
+		alert("Registro salvo com sucesso");
+		window.location.reload();
+	}
+
+	if (clients.length === 0) {
+		return (
+			<div className="space-y-2 rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4">
+				<h2 className="text-sm font-semibold text-zinc-200">Novo registro</h2>
+				<p className="text-sm text-zinc-500">Cadastre um cliente primeiro.</p>
+			</div>
+		);
+	}
+
+	return (
+		<form
+			onSubmit={handleSubmit}
+			className="space-y-3 rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4"
+		>
+			<h2 className="text-sm font-semibold text-zinc-200">Novo registro</h2>
+
+			<select
+				className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
+				value={form.clientId}
+				onChange={(e) =>
+					setForm({ ...form, clientId: e.target.value, vehicleId: "" })
+				}
+			>
+				{clients.map((client) => (
+					<option key={client._id} value={client._id}>
+						{client.name}
+					</option>
+				))}
+			</select>
+
+			<select
+				className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
+				value={form.vehicleId}
+				onChange={(e) => setForm({ ...form, vehicleId: e.target.value })}
+			>
+				<option value="">Sem veículo</option>
+				{filteredVehicles.map((vehicle) => (
+					<option key={vehicle._id} value={vehicle._id}>
+						{vehicle.model} - {vehicle.vin}
+					</option>
+				))}
+			</select>
+
+			<select
+				className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
+				value={form.type}
+				onChange={(e) => {
+					const nextType = e.target.value;
+					const currentTitle = form.title.trim();
+					const isAutoTitle =
+						currentTitle.length === 0 ||
+						currentTitle === "Instalação de stage" ||
+						currentTitle === "Remoção" ||
+						currentTitle === "Renovação";
+
+					setForm({
+						...form,
+						type: nextType,
+						title: isAutoTitle ? serviceLabel(nextType) : form.title,
+					});
+				}}
+			>
+				<option value="stage_installation">Instalação de stage</option>
+				<option value="removal">Remoção</option>
+				<option value="renewal">Renovação</option>
+			</select>
+
+			<input
+				className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
+				placeholder="Título"
+				value={form.title}
+				onChange={(e) => setForm({ ...form, title: e.target.value })}
+			/>
+			<textarea
+				className="min-h-24 w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
+				placeholder="Descrição"
+				value={form.description}
+				onChange={(e) => setForm({ ...form, description: e.target.value })}
+			/>
+
+			<button className="inline-flex items-center justify-center rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200">
+				Salvar
+			</button>
+		</form>
+	);
+}

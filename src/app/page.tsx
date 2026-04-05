@@ -1,65 +1,174 @@
-import Image from "next/image";
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { connectToDatabase } from "@/lib/mongodb";
+import { User } from "@/models/User";
+import { Client } from "@/models/Client";
+import { Vehicle } from "@/models/Vehicle";
+import { Order } from "@/models/Order";
+import { Header } from "@/components/Header";
+import { ClientList, VehicleList } from "@/components/ClientList";
 
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+type ClientItem = {
+	_id: string;
+	name: string;
+	stateId?: string;
+	phone?: string;
+	discordTag?: string;
+};
+
+type VehicleItem = {
+	_id: string;
+	clientId: string;
+	model: string;
+	vin: string;
+	imageUrl?: string;
+};
+
+type OrderItem = {
+	_id: string;
+	title: string;
+	type: string;
+	clientId?: { name?: string } | null;
+	createdBy?: { discordId?: string; username?: string; name?: string } | null;
+	vehicleId?: { model: string; vin?: string; plate?: string } | null;
+};
+
+function orderTypeLabel(type: string) {
+	if (type === "stage_installation") return "Instalação de stage";
+	if (type === "removal") return "Remoção";
+	if (type === "renewal") return "Renovação";
+	return type;
+}
+
+export default async function HomePage() {
+	const session = await getServerSession(authOptions);
+	if (!session?.user?.discordId) redirect("/login");
+
+	await connectToDatabase();
+
+	const currentUser = await User.findOne({
+		discordId: session.user.discordId,
+	}).lean();
+	if (!currentUser?.isAuthorized) {
+		return (
+			<main className="flex min-h-screen items-center justify-center px-6">
+				<div className="max-w-lg rounded-2xl border border-zinc-900 bg-zinc-950/40 p-8 text-center">
+					<h1 className="mb-3 text-xl font-semibold tracking-tight text-zinc-100">
+						Acesso pendente
+					</h1>
+					<p className="text-sm text-zinc-500">
+						Sua conta existe, mas ainda não foi autorizada por um gerente da
+						mecânica.
+					</p>
+				</div>
+			</main>
+		);
+	}
+
+	await Order.updateMany(
+		{ $or: [{ price: { $exists: true } }, { status: { $exists: true } }] },
+		{ $unset: { price: "", status: "" } },
+		{ strict: false },
+	);
+
+	const [clients, vehicles, orders] = await Promise.all([
+		Client.find().sort({ createdAt: -1 }).lean(),
+		Vehicle.find().sort({ createdAt: -1 }).lean(),
+		Order.find()
+			.populate("clientId", "name")
+			.populate("createdBy", "username name discordId")
+			.populate("vehicleId", "model vin plate")
+			.sort({ createdAt: -1 })
+			.lean(),
+	]);
+
+	const serializedClients: ClientItem[] = JSON.parse(JSON.stringify(clients));
+	const serializedVehiclesRaw = JSON.parse(JSON.stringify(vehicles)) as unknown[];
+	const serializedVehicles: VehicleItem[] = serializedVehiclesRaw
+		.map((v) => v as Record<string, unknown>)
+		.map((v) => ({
+			...(v as unknown as VehicleItem),
+			vin:
+				(typeof v.vin === "string" && v.vin.trim().length > 0
+					? v.vin
+					: typeof v.plate === "string"
+						? v.plate
+						: "") || "",
+		}));
+
+	const serializedOrdersRaw = JSON.parse(JSON.stringify(orders)) as unknown[];
+	const serializedOrders: OrderItem[] = serializedOrdersRaw
+		.map((o) => o as Record<string, unknown>)
+		.map((o) => {
+			const vehicleId = (o.vehicleId as
+				| { model: string; vin?: string; plate?: string }
+				| null
+				| undefined) ?? null;
+
+			return {
+				...(o as unknown as OrderItem),
+				vehicleId: vehicleId
+					? { ...vehicleId, vin: vehicleId.vin || vehicleId.plate || "" }
+					: null,
+			};
+		});
+
+	return (
+		<main>
+			<Header clients={serializedClients} vehicles={serializedVehicles} />
+
+			<section className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+				<div className="grid gap-6 lg:grid-cols-3">
+					<ClientList
+						clients={serializedClients}
+						vehicles={serializedVehicles}
+						orders={serializedOrders}
+					/>
+					<VehicleList
+						vehicles={serializedVehicles}
+						orders={serializedOrders}
+						clients={serializedClients}
+					/>
+
+					<div className="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4 lg:col-span-1">
+						<h2 className="mb-4 text-sm font-semibold text-zinc-200">
+							Histórico
+						</h2>
+						<div className="space-y-3">
+							{serializedOrders.map((order) => (
+								<div
+									key={order._id}
+									className="rounded-xl border border-zinc-900 bg-zinc-950 p-3"
+								>
+									<p className="text-sm font-semibold text-zinc-100">
+										{order.title}
+									</p>
+									<p className="text-sm text-zinc-500">
+										Tipo: {orderTypeLabel(order.type)}
+									</p>
+									<p className="text-sm text-zinc-600">
+										Cliente: {order.clientId?.name || "-"}
+									</p>
+									<p className="text-sm text-zinc-600">
+										Veículo:{" "}
+										{order.vehicleId
+											? `${order.vehicleId.model} - ${order.vehicleId.vin}`
+											: "-"}
+									</p>
+									<p className="text-sm text-zinc-600">
+										Mecânico:{" "}
+										{order.createdBy?.username ||
+											order.createdBy?.name ||
+											order.createdBy?.discordId ||
+											"-"}
+									</p>
+								</div>
+							))}
+						</div>
+					</div>
+				</div>
+			</section>
+		</main>
+	);
 }
