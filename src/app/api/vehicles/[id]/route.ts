@@ -4,6 +4,7 @@ import { requireAuthorizedUser } from "@/lib/auth-guard";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Vehicle } from "@/models/Vehicle";
 import { Order } from "@/models/Order";
+import { Client } from "@/models/Client";
 
 function isAllowedVehicleImageUrl(value: string) {
 	try {
@@ -39,9 +40,14 @@ const updateVehicleSchema = z.object({
 	observations: z.string().optional().default(""),
 });
 
-const patchVehicleSchema = z.object({
-	isBanned: z.boolean(),
-});
+const patchVehicleSchema = z.union([
+	z.object({
+		isBanned: z.boolean(),
+	}),
+	z.object({
+		clientId: z.string().min(1),
+	}),
+]);
 
 export async function GET(
 	_: NextRequest,
@@ -138,6 +144,56 @@ export async function PATCH(
 	}
 
 	await connectToDatabase();
+
+	if ("clientId" in parsed.data) {
+		const vehicle = await Vehicle.findById(id).lean();
+		if (!vehicle) {
+			return NextResponse.json(
+				{ message: "Veículo não encontrado" },
+				{ status: 404 },
+			);
+		}
+
+		const client = await Client.findById(parsed.data.clientId).lean();
+		if (!client) {
+			return NextResponse.json(
+				{ message: "Cliente não encontrado" },
+				{ status: 404 },
+			);
+		}
+		if (client.isBanned) {
+			return NextResponse.json(
+				{ message: "Cliente não possui vagas disponíveis" },
+				{ status: 400 },
+			);
+		}
+
+		if (String(vehicle.clientId) !== parsed.data.clientId) {
+			const count = await Vehicle.countDocuments({ clientId: parsed.data.clientId });
+			if (count >= 2) {
+				return NextResponse.json(
+					{ message: "Cliente não possui vagas disponíveis" },
+					{ status: 400 },
+				);
+			}
+		}
+
+		const updated = await Vehicle.findByIdAndUpdate(
+			id,
+			{ $set: { clientId: parsed.data.clientId } },
+			{ new: true },
+		).lean();
+
+		if (!updated) {
+			return NextResponse.json(
+				{ message: "Veículo não encontrado" },
+				{ status: 404 },
+			);
+		}
+
+		return NextResponse.json(updated);
+	}
+
 	const vehicle = await Vehicle.findByIdAndUpdate(
 		id,
 		{

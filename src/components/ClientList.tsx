@@ -72,6 +72,14 @@ function orderTypeLabel(type: string) {
 	return type;
 }
 
+function vehicleCountByClientId(vehicles: VehicleItem[]) {
+	const map = new Map<string, number>();
+	for (const vehicle of vehicles) {
+		map.set(vehicle.clientId, (map.get(vehicle.clientId) || 0) + 1);
+	}
+	return map;
+}
+
 function orderVehicleId(order: OrderItem) {
 	if (!order.vehicleId) return null;
 	if (typeof order.vehicleId === "string") return order.vehicleId;
@@ -110,6 +118,9 @@ export function ClientList({
 	} | null>(null);
 	const [isClientEditLoading, setIsClientEditLoading] = useState(false);
 	const [isClientEditSaving, setIsClientEditSaving] = useState(false);
+	const [isOwnerEditOpen, setIsOwnerEditOpen] = useState(false);
+	const [nextOwnerId, setNextOwnerId] = useState("");
+	const [isOwnerSaving, setIsOwnerSaving] = useState(false);
 
 	async function setClientBanned(clientId: string, isBanned: boolean) {
 		const res = await fetch(`/api/clients/${clientId}`, {
@@ -144,6 +155,30 @@ export function ClientList({
 		toast.warning("Cliente deletado");
 		setSelectedClientId(null);
 		router.refresh();
+	}
+
+	async function changeVehicleOwner(vehicleId: string, clientId: string) {
+		setIsOwnerSaving(true);
+		try {
+			const res = await fetch(`/api/vehicles/${vehicleId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ clientId }),
+			});
+			const data = await res.json().catch(() => null);
+			if (!res.ok) {
+				toast.error(data?.message || "Erro ao atualizar proprietário");
+				return;
+			}
+
+			toast.success("Proprietário atualizado");
+			setIsOwnerEditOpen(false);
+			setNextOwnerId("");
+			setSelectedVehicleId(null);
+			router.refresh();
+		} finally {
+			setIsOwnerSaving(false);
+		}
 	}
 
 	async function saveClientEdit() {
@@ -258,10 +293,20 @@ export function ClientList({
 		return orders.filter((order) => orderVehicleId(order) === selectedVehicleId);
 	}, [orders, selectedVehicleId]);
 
+	const vehicleCounts = useMemo(() => vehicleCountByClientId(vehicles), [vehicles]);
+
 	const selectedVehicleOwner = useMemo(() => {
 		if (!selectedVehicle) return null;
 		return clients.find((c) => c._id === selectedVehicle.clientId) || null;
 	}, [clients, selectedVehicle]);
+
+	const eligibleOwnerClients = useMemo(() => {
+		if (!selectedVehicle) return [];
+		return clients
+			.filter((c) => !c.isBanned)
+			.filter((c) => c._id !== selectedVehicle.clientId)
+			.filter((c) => (vehicleCounts.get(c._id) || 0) < 2);
+	}, [clients, selectedVehicle, vehicleCounts]);
 
 	const isClientModalOpen = selectedClientId !== null;
 	const isVehicleModalOpen = selectedVehicleId !== null;
@@ -313,6 +358,12 @@ export function ClientList({
 			cancelled = true;
 		};
 	}, [selectedClientId]);
+
+	useEffect(() => {
+		setIsOwnerEditOpen(false);
+		setNextOwnerId("");
+		setIsOwnerSaving(false);
+	}, [selectedVehicleId]);
 
 	useEffect(() => {
 		if (!isClientModalOpen && !isVehicleModalOpen && !isCreateClientOpen) return;
@@ -652,7 +703,73 @@ export function ClientList({
 							</div>
 
 							<div className="mt-5 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
-								<p className="text-sm font-semibold text-zinc-200">Proprietário</p>
+								<div className="flex items-center justify-between gap-3">
+									<p className="text-sm font-semibold text-zinc-200">
+										Proprietário
+									</p>
+									<button
+										type="button"
+										disabled={eligibleOwnerClients.length === 0}
+										onClick={() => setIsOwnerEditOpen(true)}
+										className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+									>
+										Alterar proprietário
+									</button>
+								</div>
+								{isOwnerEditOpen ? (
+									<div className="mt-3 space-y-2">
+										<label className="block space-y-1">
+											<span className="text-xs font-semibold text-zinc-500">
+												Novo proprietário (com vagas disponíveis)
+											</span>
+											<select
+												className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
+												value={nextOwnerId}
+												onChange={(e) => setNextOwnerId(e.target.value)}
+											>
+												<option value="">Selecione um cliente</option>
+												{eligibleOwnerClients.map((client) => {
+													const used = vehicleCounts.get(client._id) || 0;
+													const stateId = (client.stateId || "").trim();
+													return (
+														<option key={client._id} value={client._id}>
+															{client.name}
+															{stateId ? ` - ${stateId}` : ""} ({used}/2)
+														</option>
+													);
+												})}
+											</select>
+										</label>
+										<div className="flex items-center gap-2">
+											<button
+												type="button"
+												disabled={
+													isOwnerSaving ||
+													!nextOwnerId ||
+													!eligibleOwnerClients.some((c) => c._id === nextOwnerId)
+												}
+												onClick={() => {
+													if (!selectedVehicle) return;
+													void changeVehicleOwner(selectedVehicle._id, nextOwnerId);
+												}}
+												className="rounded-xl bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+											>
+												Salvar
+											</button>
+											<button
+												type="button"
+												disabled={isOwnerSaving}
+												onClick={() => {
+													setIsOwnerEditOpen(false);
+													setNextOwnerId("");
+												}}
+												className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+											>
+												Cancelar
+											</button>
+										</div>
+									</div>
+								) : null}
 								{selectedVehicleOwner ? (
 									<div className="mt-1 space-y-1">
 										<p className="text-sm text-zinc-100">
@@ -746,6 +863,9 @@ export function VehicleList({
 	const [query, setQuery] = useState("");
 	const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 	const [isCreateVehicleOpen, setIsCreateVehicleOpen] = useState(false);
+	const [isOwnerEditOpen, setIsOwnerEditOpen] = useState(false);
+	const [nextOwnerId, setNextOwnerId] = useState("");
+	const [isOwnerSaving, setIsOwnerSaving] = useState(false);
 
 	async function setVehicleBanned(vehicleId: string, isBanned: boolean) {
 		const res = await fetch(`/api/vehicles/${vehicleId}`, {
@@ -782,15 +902,48 @@ export function VehicleList({
 		router.refresh();
 	}
 
+	async function changeVehicleOwner(vehicleId: string, clientId: string) {
+		setIsOwnerSaving(true);
+		try {
+			const res = await fetch(`/api/vehicles/${vehicleId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ clientId }),
+			});
+			const data = await res.json().catch(() => null);
+			if (!res.ok) {
+				toast.error(data?.message || "Erro ao atualizar proprietário");
+				return;
+			}
+
+			toast.success("Proprietário atualizado");
+			setIsOwnerEditOpen(false);
+			setNextOwnerId("");
+			router.refresh();
+		} finally {
+			setIsOwnerSaving(false);
+		}
+	}
+
 	const selectedVehicle = useMemo(
 		() => vehicles.find((v) => v._id === selectedVehicleId) || null,
 		[vehicles, selectedVehicleId],
 	);
 
+	const vehicleCounts = useMemo(() => vehicleCountByClientId(vehicles), [vehicles]);
+
 	const selectedVehicleOwner = useMemo(() => {
 		if (!selectedVehicle) return null;
 		return clients.find((c) => c._id === selectedVehicle.clientId) || null;
 	}, [clients, selectedVehicle]);
+
+	const eligibleOwnerClients = useMemo(() => {
+		if (!selectedVehicle) return [];
+		return clients
+			.filter((c) => !c.isBanned)
+			.filter((c) => c._id !== selectedVehicle.clientId)
+			.filter((c) => (vehicleCounts.get(c._id) || 0) < 2);
+	}, [clients, selectedVehicle, vehicleCounts]);
 
 	const filteredVehicles = useMemo(() => {
 		const q = normalize(query);
@@ -816,6 +969,12 @@ export function VehicleList({
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
 	}, [selectedVehicleId, isCreateVehicleOpen]);
+
+	useEffect(() => {
+		setIsOwnerEditOpen(false);
+		setNextOwnerId("");
+		setIsOwnerSaving(false);
+	}, [selectedVehicleId]);
 
 	return (
 		<div className="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4 lg:col-span-1">
@@ -987,7 +1146,73 @@ export function VehicleList({
 							</div>
 
 							<div className="mt-5 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
-								<p className="text-sm font-semibold text-zinc-200">Proprietário</p>
+								<div className="flex items-center justify-between gap-3">
+									<p className="text-sm font-semibold text-zinc-200">
+										Proprietário
+									</p>
+									<button
+										type="button"
+										disabled={eligibleOwnerClients.length === 0}
+										onClick={() => setIsOwnerEditOpen(true)}
+										className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+									>
+										Alterar proprietário
+									</button>
+								</div>
+								{isOwnerEditOpen ? (
+									<div className="mt-3 space-y-2">
+										<label className="block space-y-1">
+											<span className="text-xs font-semibold text-zinc-500">
+												Novo proprietário (com vagas disponíveis)
+											</span>
+											<select
+												className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
+												value={nextOwnerId}
+												onChange={(e) => setNextOwnerId(e.target.value)}
+											>
+												<option value="">Selecione um cliente</option>
+												{eligibleOwnerClients.map((client) => {
+													const used = vehicleCounts.get(client._id) || 0;
+													const stateId = (client.stateId || "").trim();
+													return (
+														<option key={client._id} value={client._id}>
+															{client.name}
+															{stateId ? ` - ${stateId}` : ""} ({used}/2)
+														</option>
+													);
+												})}
+											</select>
+										</label>
+										<div className="flex items-center gap-2">
+											<button
+												type="button"
+												disabled={
+													isOwnerSaving ||
+													!nextOwnerId ||
+													!eligibleOwnerClients.some((c) => c._id === nextOwnerId)
+												}
+												onClick={() => {
+													if (!selectedVehicle) return;
+													void changeVehicleOwner(selectedVehicle._id, nextOwnerId);
+												}}
+												className="rounded-xl bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+											>
+												Salvar
+											</button>
+											<button
+												type="button"
+												disabled={isOwnerSaving}
+												onClick={() => {
+													setIsOwnerEditOpen(false);
+													setNextOwnerId("");
+												}}
+												className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+											>
+												Cancelar
+											</button>
+										</div>
+									</div>
+								) : null}
 								{selectedVehicleOwner ? (
 									<div className="mt-1 space-y-1">
 										<p className="text-sm text-zinc-100">
