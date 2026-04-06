@@ -80,6 +80,18 @@ function vehicleCountByClientId(vehicles: VehicleItem[]) {
 	return map;
 }
 
+function clientHasVehicleVin(
+	vehicles: VehicleItem[],
+	clientId: string,
+	vin: string,
+) {
+	const needle = vin.trim().toUpperCase();
+	if (!needle) return false;
+	return vehicles.some(
+		(v) => v.clientId === clientId && v.vin.trim().toUpperCase() === needle,
+	);
+}
+
 function orderVehicleId(order: OrderItem) {
 	if (!order.vehicleId) return null;
 	if (typeof order.vehicleId === "string") return order.vehicleId;
@@ -302,11 +314,16 @@ export function ClientList({
 
 	const eligibleOwnerClients = useMemo(() => {
 		if (!selectedVehicle) return [];
+		const vin = selectedVehicle.vin.trim().toUpperCase();
 		return clients
 			.filter((c) => !c.isBanned)
 			.filter((c) => c._id !== selectedVehicle.clientId)
-			.filter((c) => (vehicleCounts.get(c._id) || 0) < 2);
-	}, [clients, selectedVehicle, vehicleCounts]);
+			.filter(
+				(c) =>
+					(vehicleCounts.get(c._id) || 0) < 2 ||
+					clientHasVehicleVin(vehicles, c._id, vin),
+			);
+	}, [clients, selectedVehicle, vehicleCounts, vehicles]);
 
 	const isClientModalOpen = selectedClientId !== null;
 	const isVehicleModalOpen = selectedVehicleId !== null;
@@ -412,8 +429,8 @@ export function ClientList({
 							setSelectedClientId(client._id);
 						}}
 						className={`block w-full rounded-xl border p-3 text-left hover:border-zinc-700 ${client.isBanned
-								? "border-red-900/60 bg-red-950/40"
-								: "border-zinc-900 bg-zinc-950"
+							? "border-red-900/60 bg-red-950/40"
+							: "border-zinc-900 bg-zinc-950"
 							}`}
 					>
 						<p className="text-sm font-semibold text-zinc-100">
@@ -607,8 +624,8 @@ export function ClientList({
 											type="button"
 											key={vehicle._id}
 											className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-zinc-700 ${vehicle.isBanned
-													? "border-red-900/60 bg-red-950/30"
-													: "border-zinc-900 bg-zinc-950/60"
+												? "border-red-900/60 bg-red-950/30"
+												: "border-zinc-900 bg-zinc-950/60"
 												}`}
 											onClick={() => setSelectedVehicleId(vehicle._id)}
 										>
@@ -720,7 +737,7 @@ export function ClientList({
 									<div className="mt-3 space-y-2">
 										<label className="block space-y-1">
 											<span className="text-xs font-semibold text-zinc-500">
-												Novo proprietário (com vagas disponíveis)
+												Novo proprietário
 											</span>
 											<select
 												className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
@@ -731,10 +748,18 @@ export function ClientList({
 												{eligibleOwnerClients.map((client) => {
 													const used = vehicleCounts.get(client._id) || 0;
 													const stateId = (client.stateId || "").trim();
+													const willMerge =
+														selectedVehicle &&
+														clientHasVehicleVin(
+															vehicles,
+															client._id,
+															selectedVehicle.vin,
+														);
 													return (
 														<option key={client._id} value={client._id}>
 															{client.name}
 															{stateId ? ` - ${stateId}` : ""} ({used}/2)
+															{willMerge ? " (mesclar)" : ""}
 														</option>
 													);
 												})}
@@ -908,7 +933,7 @@ export function VehicleList({
 			const res = await fetch(`/api/vehicles/${vehicleId}`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ clientId }),
+				body: JSON.stringify({ clientId: clientId }),
 			});
 			const data = await res.json().catch(() => null);
 			if (!res.ok) {
@@ -919,6 +944,7 @@ export function VehicleList({
 			toast.success("Proprietário atualizado");
 			setIsOwnerEditOpen(false);
 			setNextOwnerId("");
+			if (data?._id) setSelectedVehicleId(String(data._id));
 			router.refresh();
 		} finally {
 			setIsOwnerSaving(false);
@@ -939,11 +965,16 @@ export function VehicleList({
 
 	const eligibleOwnerClients = useMemo(() => {
 		if (!selectedVehicle) return [];
+		const vin = selectedVehicle.vin.trim().toUpperCase();
 		return clients
 			.filter((c) => !c.isBanned)
 			.filter((c) => c._id !== selectedVehicle.clientId)
-			.filter((c) => (vehicleCounts.get(c._id) || 0) < 2);
-	}, [clients, selectedVehicle, vehicleCounts]);
+			.filter(
+				(c) =>
+					(vehicleCounts.get(c._id) || 0) < 2 ||
+					clientHasVehicleVin(vehicles, c._id, vin),
+			);
+	}, [clients, selectedVehicle, vehicleCounts, vehicles]);
 
 	const filteredVehicles = useMemo(() => {
 		const q = normalize(query);
@@ -1000,8 +1031,8 @@ export function VehicleList({
 						type="button"
 						key={vehicle._id}
 						className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-zinc-700 ${vehicle.isBanned
-								? "border-red-900/60 bg-red-950/40"
-								: "border-zinc-900 bg-zinc-950"
+							? "border-red-900/60 bg-red-950/40"
+							: "border-zinc-900 bg-zinc-950"
 							}`}
 						onClick={() => setSelectedVehicleId(vehicle._id)}
 					>
@@ -1163,7 +1194,7 @@ export function VehicleList({
 									<div className="mt-3 space-y-2">
 										<label className="block space-y-1">
 											<span className="text-xs font-semibold text-zinc-500">
-												Novo proprietário (com vagas disponíveis)
+												Novo proprietário
 											</span>
 											<select
 												className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-700 focus:outline-none"
@@ -1174,10 +1205,18 @@ export function VehicleList({
 												{eligibleOwnerClients.map((client) => {
 													const used = vehicleCounts.get(client._id) || 0;
 													const stateId = (client.stateId || "").trim();
+													const willMerge =
+														selectedVehicle &&
+														clientHasVehicleVin(
+															vehicles,
+															client._id,
+															selectedVehicle.vin,
+														);
 													return (
 														<option key={client._id} value={client._id}>
 															{client.name}
 															{stateId ? ` - ${stateId}` : ""} ({used}/2)
+															{willMerge ? " (mesclar)" : ""}
 														</option>
 													);
 												})}
