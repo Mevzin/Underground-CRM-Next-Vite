@@ -7,7 +7,7 @@ import { Client } from "@/models/Client";
 import { Vehicle } from "@/models/Vehicle";
 import { Order } from "@/models/Order";
 import { Header } from "@/components/Header";
-import { ClientList, VehicleList } from "@/components/ClientList";
+import { ClientList, HistoryPanel, VehicleList } from "@/components/ClientList";
 
 type ClientItem = {
 	_id: string;
@@ -15,6 +15,7 @@ type ClientItem = {
 	stateId?: string;
 	phone?: string;
 	discordTag?: string;
+	crew?: string;
 };
 
 type VehicleItem = {
@@ -23,23 +24,18 @@ type VehicleItem = {
 	model: string;
 	vin: string;
 	imageUrl?: string;
+	isBanned?: boolean;
 };
 
 type OrderItem = {
 	_id: string;
 	title: string;
 	type: string;
+	description?: string;
 	clientId?: { name?: string } | null;
 	createdBy?: { discordId?: string; username?: string; name?: string } | null;
 	vehicleId?: { model: string; vin?: string; plate?: string } | null;
 };
-
-function orderTypeLabel(type: string) {
-	if (type === "stage_installation") return "Instalação de stage";
-	if (type === "removal") return "Remoção";
-	if (type === "renewal") return "Renovação";
-	return type;
-}
 
 export default async function HomePage() {
 	const session = await getServerSession(authOptions);
@@ -116,7 +112,7 @@ export default async function HomePage() {
 
 	return (
 		<main>
-			<Header clients={serializedClients} vehicles={serializedVehicles} />
+			<Header />
 
 			<section className="mx-auto max-w-6xl space-y-8 px-6 py-8">
 				<div className="grid gap-6 lg:grid-cols-3">
@@ -130,43 +126,11 @@ export default async function HomePage() {
 						orders={serializedOrders}
 						clients={serializedClients}
 					/>
-
-					<div className="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4 lg:col-span-1">
-						<h2 className="mb-4 text-sm font-semibold text-zinc-200">
-							Histórico
-						</h2>
-						<div className="space-y-3">
-							{serializedOrders.map((order) => (
-								<div
-									key={order._id}
-									className="rounded-xl border border-zinc-900 bg-zinc-950 p-3"
-								>
-									<p className="text-sm font-semibold text-zinc-100">
-										{order.title}
-									</p>
-									<p className="text-sm text-zinc-500">
-										Tipo: {orderTypeLabel(order.type)}
-									</p>
-									<p className="text-sm text-zinc-600">
-										Cliente: {order.clientId?.name || "-"}
-									</p>
-									<p className="text-sm text-zinc-600">
-										Veículo:{" "}
-										{order.vehicleId
-											? `${order.vehicleId.model} - ${order.vehicleId.vin}`
-											: "-"}
-									</p>
-									<p className="text-sm text-zinc-600">
-										Mecânico:{" "}
-										{order.createdBy?.username ||
-											order.createdBy?.name ||
-											order.createdBy?.discordId ||
-											"-"}
-									</p>
-								</div>
-							))}
-						</div>
-					</div>
+					<HistoryPanel
+						clients={serializedClients}
+						vehicles={serializedVehicles}
+						orders={serializedOrders}
+					/>
 				</div>
 			</section>
 		</main>

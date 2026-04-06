@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
 		remotePatterns: [
 			{ protocol: "https", hostname: "kappa.lol" },
 			{ protocol: "https", hostname: "*.kappa.lol" },
+			{ protocol: "https", hostname: "fivemanage.com" },
+			{ protocol: "https", hostname: "*.fivemanage.com" },
 			{ protocol: "https", hostname: "fivemanager.net" },
 			{ protocol: "https", hostname: "*.fivemanager.net" },
 			{ protocol: "https", hostname: "fivemanager.com" },

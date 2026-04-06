@@ -9,6 +9,7 @@ const clientSchema = z.object({
 	stateId: z.string().optional().default(""),
 	phone: z.string().optional().default(""),
 	discordTag: z.string().optional().default(""),
+	crew: z.string().optional().default(""),
 	notes: z.string().optional().default(""),
 });
 

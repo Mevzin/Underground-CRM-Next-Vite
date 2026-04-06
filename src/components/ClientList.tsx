@@ -1,7 +1,12 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { ClientForm } from "@/components/ClientForm";
+import { VehicleForm } from "@/components/VehicleForm";
+import { OrderForm } from "@/components/OrderForm";
+import { useToast } from "@/components/ToastProvider";
 
 type ClientItem = {
 	_id: string;
@@ -9,6 +14,8 @@ type ClientItem = {
 	stateId?: string;
 	phone?: string;
 	discordTag?: string;
+	crew?: string;
+	isBanned?: boolean;
 };
 
 type VehicleItem = {
@@ -17,12 +24,14 @@ type VehicleItem = {
 	model: string;
 	vin: string;
 	imageUrl?: string;
+	isBanned?: boolean;
 };
 
 type OrderItem = {
 	_id: string;
 	title: string;
 	type: string;
+	description?: string;
 	createdAt?: string;
 	clientId?: { name?: string } | null;
 	createdBy?: { discordId?: string; username?: string; name?: string } | null;
@@ -44,6 +53,8 @@ function isAllowedVehicleImageUrl(value: string) {
 			url.protocol === "https:" &&
 			(host === "kappa.lol" ||
 				host.endsWith(".kappa.lol") ||
+				host === "fivemanage.com" ||
+				host.endsWith(".fivemanage.com") ||
 				host === "fivemanager.net" ||
 				host.endsWith(".fivemanager.net") ||
 				host === "fivemanager.com" ||
@@ -76,10 +87,112 @@ export function ClientList({
 	vehicles: VehicleItem[];
 	orders: OrderItem[];
 }) {
+	const toast = useToast();
+	const router = useRouter();
 	const [clientQuery, setClientQuery] = useState("");
+	const [isCreateClientOpen, setIsCreateClientOpen] = useState(false);
 	const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 	const [vehicleQuery, setVehicleQuery] = useState("");
 	const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+	const [clientEdit, setClientEdit] = useState<{
+		_id: string;
+		name: string;
+		crew: string;
+		stateId: string;
+		phone: string;
+		discordTag: string;
+		notes: string;
+	} | null>(null);
+	const [clientEditInitial, setClientEditInitial] = useState<{
+		_id: string;
+		name: string;
+		crew: string;
+	} | null>(null);
+	const [isClientEditLoading, setIsClientEditLoading] = useState(false);
+	const [isClientEditSaving, setIsClientEditSaving] = useState(false);
+
+	async function setClientBanned(clientId: string, isBanned: boolean) {
+		const res = await fetch(`/api/clients/${clientId}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ isBanned }),
+		});
+
+		const data = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			toast.error(data?.message || "Erro ao atualizar cliente");
+			return;
+		}
+
+		toast.success(isBanned ? "Cliente banido" : "Cliente desbanido");
+		router.refresh();
+	}
+
+	async function deleteClient(clientId: string) {
+		const res = await fetch(`/api/clients/${clientId}`, {
+			method: "DELETE",
+		});
+
+		const data = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			toast.error(data?.message || "Erro ao deletar cliente");
+			return;
+		}
+
+		toast.warning("Cliente deletado");
+		setSelectedClientId(null);
+		router.refresh();
+	}
+
+	async function saveClientEdit() {
+		if (!clientEdit) return;
+		if (!isClientEditDirty) return;
+		const name = clientEdit.name.trim();
+		if (name.length < 2) {
+			toast.error("Nome precisa ter pelo menos 2 caracteres");
+			return;
+		}
+
+		setIsClientEditSaving(true);
+		try {
+			const res = await fetch(`/api/clients/${clientEdit._id}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					name,
+					crew: clientEdit.crew.trim(),
+					stateId: clientEdit.stateId,
+					phone: clientEdit.phone,
+					discordTag: clientEdit.discordTag,
+					notes: clientEdit.notes,
+				}),
+			});
+
+			const data = await res.json().catch(() => null);
+
+			if (!res.ok) {
+				toast.error(data?.message || "Erro ao salvar cliente");
+				return;
+			}
+
+			toast.success("Cliente atualizado");
+			setClientEditInitial({
+				_id: clientEdit._id,
+				name: name,
+				crew: clientEdit.crew.trim(),
+			});
+			setClientEdit({
+				...clientEdit,
+				name: name,
+				crew: clientEdit.crew.trim(),
+			});
+			router.refresh();
+		} finally {
+			setIsClientEditSaving(false);
+		}
+	}
 
 	const filteredClients = useMemo(() => {
 		const q = normalize(clientQuery);
@@ -153,24 +266,85 @@ export function ClientList({
 	const isClientModalOpen = selectedClientId !== null;
 	const isVehicleModalOpen = selectedVehicleId !== null;
 
+	const isClientEditDirty = useMemo(() => {
+		if (!clientEdit || !clientEditInitial) return false;
+		if (clientEdit._id !== clientEditInitial._id) return false;
+		return (
+			clientEdit.name.trim() !== clientEditInitial.name.trim() ||
+			clientEdit.crew.trim() !== clientEditInitial.crew.trim()
+		);
+	}, [clientEdit, clientEditInitial]);
+
 	useEffect(() => {
-		if (!isClientModalOpen && !isVehicleModalOpen) return;
+		if (!selectedClientId) {
+			setClientEdit(null);
+			setClientEditInitial(null);
+			return;
+		}
+
+		let cancelled = false;
+		setIsClientEditLoading(true);
+		void (async () => {
+			try {
+				const res = await fetch(`/api/clients/${selectedClientId}`);
+				const data = await res.json().catch(() => null);
+				if (!res.ok) return;
+				if (cancelled) return;
+
+				const id = String(data?._id || selectedClientId);
+				const name = String(data?.name || "");
+				const crew = String(data?.crew || "");
+				setClientEditInitial({ _id: id, name, crew });
+				setClientEdit({
+					_id: id,
+					name,
+					crew,
+					stateId: String(data?.stateId || ""),
+					phone: String(data?.phone || ""),
+					discordTag: String(data?.discordTag || ""),
+					notes: String(data?.notes || ""),
+				});
+			} finally {
+				if (!cancelled) setIsClientEditLoading(false);
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedClientId]);
+
+	useEffect(() => {
+		if (!isClientModalOpen && !isVehicleModalOpen && !isCreateClientOpen) return;
 		function onKeyDown(e: KeyboardEvent) {
 			if (e.key !== "Escape") return;
 			if (isVehicleModalOpen) {
 				setSelectedVehicleId(null);
 				return;
 			}
-			setSelectedClientId(null);
+			if (isClientModalOpen) {
+				setSelectedClientId(null);
+				return;
+			}
+			setIsCreateClientOpen(false);
 		}
 
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [isClientModalOpen, isVehicleModalOpen]);
+	}, [isClientModalOpen, isVehicleModalOpen, isCreateClientOpen]);
 
 	return (
 		<div className="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4 lg:col-span-1">
-			<h2 className="mb-3 text-sm font-semibold text-zinc-200">Clientes</h2>
+			<div className="mb-3 flex items-center justify-between gap-3">
+				<h2 className="text-sm font-semibold text-zinc-200">Clientes</h2>
+				<button
+					type="button"
+					onClick={() => setIsCreateClientOpen(true)}
+					className="rounded-xl bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200"
+				>
+					Novo cliente
+				</button>
+			</div>
 			<input
 				className="mb-4 w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
 				placeholder="Pesquisar cliente (nome, State ID, telefone, Discord)"
@@ -186,7 +360,10 @@ export function ClientList({
 							setVehicleQuery("");
 							setSelectedClientId(client._id);
 						}}
-						className="block w-full rounded-xl border border-zinc-900 bg-zinc-950 p-3 text-left hover:border-zinc-700"
+						className={`block w-full rounded-xl border p-3 text-left hover:border-zinc-700 ${client.isBanned
+								? "border-red-900/60 bg-red-950/40"
+								: "border-zinc-900 bg-zinc-950"
+							}`}
 					>
 						<p className="text-sm font-semibold text-zinc-100">
 							{client.name}
@@ -197,9 +374,41 @@ export function ClientList({
 						<p className="text-sm text-zinc-600">
 							{client.phone || "Sem telefone"}
 						</p>
+						<p className="text-sm text-zinc-600">
+							Crew: {(client.crew || "").trim() ? client.crew : "n/a"}
+						</p>
 					</button>
 				))}
 			</div>
+
+			{isCreateClientOpen ? (
+				<div
+					className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4"
+					onMouseDown={(e) => {
+						if (e.target === e.currentTarget) setIsCreateClientOpen(false);
+					}}
+				>
+					<div className="mx-auto flex min-h-full items-center justify-center">
+						<div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
+							<div className="flex items-center justify-between gap-4">
+								<h3 className="text-lg font-semibold text-zinc-100">
+									Novo cliente
+								</h3>
+								<button
+									type="button"
+									onClick={() => setIsCreateClientOpen(false)}
+									className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+								>
+									Fechar
+								</button>
+							</div>
+							<div className="mt-4">
+								<ClientForm />
+							</div>
+						</div>
+					</div>
+				</div>
+			) : null}
 
 			{isClientModalOpen && selectedClient ? (
 				<div
@@ -223,22 +432,118 @@ export function ClientList({
 									<p className="text-sm text-zinc-600">
 										Veículos registrados: {groupVehicles.length}/2
 									</p>
+									{selectedClient.isBanned ? (
+										<p className="mt-2 inline-flex rounded-full border border-red-900/60 bg-red-950/40 px-2 py-0.5 text-xs font-semibold text-red-200">
+											Banido
+										</p>
+									) : null}
 								</div>
-								<button
-									type="button"
-									onClick={() => setSelectedClientId(null)}
-									className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
-								>
-									Fechar
-								</button>
+								<div className="flex items-center gap-2">
+									<button
+										type="button"
+										disabled={
+											isClientEditLoading ||
+											isClientEditSaving ||
+											!clientEdit ||
+											clientEdit._id !== selectedClient._id ||
+											!isClientEditDirty
+										}
+										onClick={() => void saveClientEdit()}
+										className="rounded-xl bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+									>
+										Salvar
+									</button>
+									<button
+										type="button"
+										onClick={() => {
+											const next = !selectedClient.isBanned;
+											void setClientBanned(selectedClient._id, next);
+										}}
+										className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+									>
+										{selectedClient.isBanned ? "Desbanir" : "Banir"}
+									</button>
+									<button
+										type="button"
+										onClick={() => {
+											void deleteClient(selectedClient._id);
+										}}
+										className="rounded-xl border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-950/60"
+									>
+										Deletar
+									</button>
+									<button
+										type="button"
+										onClick={() => setSelectedClientId(null)}
+										className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+									>
+										Fechar
+									</button>
+								</div>
 							</div>
 
-							<input
-								className="mt-4 w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
-								placeholder="Pesquisar veículo (modelo ou VIN)"
-								value={vehicleQuery}
-								onChange={(e) => setVehicleQuery(e.target.value)}
-							/>
+							<div className="mt-4 grid gap-3 sm:grid-cols-2">
+								<label className="block space-y-1">
+									<span className="text-xs font-semibold text-zinc-500">
+										Nome
+									</span>
+									<input
+										className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none disabled:opacity-60"
+										placeholder="Nome"
+										value={
+											clientEdit && clientEdit._id === selectedClient._id
+												? clientEdit.name
+												: selectedClient.name
+										}
+										disabled={
+											isClientEditLoading ||
+											isClientEditSaving ||
+											!clientEdit ||
+											clientEdit._id !== selectedClient._id
+										}
+										onChange={(e) => {
+											if (!clientEdit) return;
+											setClientEdit({ ...clientEdit, name: e.target.value });
+										}}
+									/>
+								</label>
+								<label className="block space-y-1">
+									<span className="text-xs font-semibold text-zinc-500">
+										Crew
+									</span>
+									<input
+										className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none disabled:opacity-60"
+										placeholder="Crew"
+										value={
+											clientEdit && clientEdit._id === selectedClient._id
+												? clientEdit.crew
+												: selectedClient.crew || ""
+										}
+										disabled={
+											isClientEditLoading ||
+											isClientEditSaving ||
+											!clientEdit ||
+											clientEdit._id !== selectedClient._id
+										}
+										onChange={(e) => {
+											if (!clientEdit) return;
+											setClientEdit({ ...clientEdit, crew: e.target.value });
+										}}
+									/>
+								</label>
+							</div>
+
+							<label className="mt-4 block space-y-1">
+								<span className="text-xs font-semibold text-zinc-500">
+									Pesquisar veículo
+								</span>
+								<input
+									className="w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
+									placeholder="Pesquisar veículo (modelo ou VIN)"
+									value={vehicleQuery}
+									onChange={(e) => setVehicleQuery(e.target.value)}
+								/>
+							</label>
 
 							<div className="mt-4 space-y-3">
 								{groupVehicles.length === 0 ? (
@@ -250,7 +555,10 @@ export function ClientList({
 										<button
 											type="button"
 											key={vehicle._id}
-											className="flex w-full items-center gap-3 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3 text-left hover:border-zinc-700"
+											className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-zinc-700 ${vehicle.isBanned
+													? "border-red-900/60 bg-red-950/30"
+													: "border-zinc-900 bg-zinc-950/60"
+												}`}
 											onClick={() => setSelectedVehicleId(vehicle._id)}
 										>
 											{vehicle.imageUrl &&
@@ -387,10 +695,10 @@ export function ClientList({
 												<div className="flex items-start justify-between gap-3">
 													<div className="min-w-0">
 														<p className="truncate text-sm font-semibold text-zinc-100">
-															{order.title}
+															{orderTypeLabel(order.type)}
 														</p>
 														<p className="text-sm text-zinc-500">
-															Tipo: {orderTypeLabel(order.type)}
+															{(order.description || "").trim() || "Sem descrição"}
 														</p>
 														<p className="text-sm text-zinc-600">
 															Cliente: {order.clientId?.name || "-"}
@@ -433,8 +741,46 @@ export function VehicleList({
 	orders: OrderItem[];
 	clients: ClientItem[];
 }) {
+	const toast = useToast();
+	const router = useRouter();
 	const [query, setQuery] = useState("");
 	const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+	const [isCreateVehicleOpen, setIsCreateVehicleOpen] = useState(false);
+
+	async function setVehicleBanned(vehicleId: string, isBanned: boolean) {
+		const res = await fetch(`/api/vehicles/${vehicleId}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ isBanned }),
+		});
+
+		const data = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			toast.error(data?.message || "Erro ao atualizar veículo");
+			return;
+		}
+
+		toast.success(isBanned ? "Veículo banido" : "Veículo desbanido");
+		router.refresh();
+	}
+
+	async function deleteVehicle(vehicleId: string) {
+		const res = await fetch(`/api/vehicles/${vehicleId}`, {
+			method: "DELETE",
+		});
+
+		const data = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			toast.error(data?.message || "Erro ao deletar veículo");
+			return;
+		}
+
+		toast.warning("Veículo deletado");
+		setSelectedVehicleId(null);
+		router.refresh();
+	}
 
 	const selectedVehicle = useMemo(
 		() => vehicles.find((v) => v._id === selectedVehicleId) || null,
@@ -458,17 +804,31 @@ export function VehicleList({
 	}, [orders, selectedVehicleId]);
 
 	useEffect(() => {
-		if (!selectedVehicleId) return;
+		if (!selectedVehicleId && !isCreateVehicleOpen) return;
 		function onKeyDown(e: KeyboardEvent) {
-			if (e.key === "Escape") setSelectedVehicleId(null);
+			if (e.key !== "Escape") return;
+			if (selectedVehicleId) {
+				setSelectedVehicleId(null);
+				return;
+			}
+			setIsCreateVehicleOpen(false);
 		}
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [selectedVehicleId]);
+	}, [selectedVehicleId, isCreateVehicleOpen]);
 
 	return (
 		<div className="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4 lg:col-span-1">
-			<h2 className="mb-3 text-sm font-semibold text-zinc-200">Veículos</h2>
+			<div className="mb-3 flex items-center justify-between gap-3">
+				<h2 className="text-sm font-semibold text-zinc-200">Veículos</h2>
+				<button
+					type="button"
+					onClick={() => setIsCreateVehicleOpen(true)}
+					className="rounded-xl bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200"
+				>
+					Novo veículo
+				</button>
+			</div>
 			<input
 				className="mb-4 w-full rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-700 focus:outline-none"
 				placeholder="Pesquisar veículo (modelo ou VIN)"
@@ -480,7 +840,10 @@ export function VehicleList({
 					<button
 						type="button"
 						key={vehicle._id}
-						className="flex w-full items-center gap-3 rounded-xl border border-zinc-900 bg-zinc-950 p-3 text-left hover:border-zinc-700"
+						className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-zinc-700 ${vehicle.isBanned
+								? "border-red-900/60 bg-red-950/40"
+								: "border-zinc-900 bg-zinc-950"
+							}`}
 						onClick={() => setSelectedVehicleId(vehicle._id)}
 					>
 						{vehicle.imageUrl && isAllowedVehicleImageUrl(vehicle.imageUrl) ? (
@@ -509,6 +872,35 @@ export function VehicleList({
 					<p className="text-sm text-zinc-500">Nenhum veículo encontrado.</p>
 				) : null}
 			</div>
+
+			{isCreateVehicleOpen ? (
+				<div
+					className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4"
+					onMouseDown={(e) => {
+						if (e.target === e.currentTarget) setIsCreateVehicleOpen(false);
+					}}
+				>
+					<div className="mx-auto flex min-h-full items-center justify-center">
+						<div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
+							<div className="flex items-center justify-between gap-4">
+								<h3 className="text-lg font-semibold text-zinc-100">
+									Novo veículo
+								</h3>
+								<button
+									type="button"
+									onClick={() => setIsCreateVehicleOpen(false)}
+									className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+								>
+									Fechar
+								</button>
+							</div>
+							<div className="mt-4">
+								<VehicleForm clients={clients} />
+							</div>
+						</div>
+					</div>
+				</div>
+			) : null}
 
 			{selectedVehicleId && selectedVehicle ? (
 				<div
@@ -540,6 +932,11 @@ export function VehicleList({
 										<h3 className="truncate text-lg font-semibold text-zinc-100">
 											{selectedVehicle.model}
 										</h3>
+										{selectedVehicle.isBanned ? (
+											<p className="mt-2 inline-flex rounded-full border border-red-900/60 bg-red-950/40 px-2 py-0.5 text-xs font-semibold text-red-200">
+												Banido
+											</p>
+										) : null}
 										<p className="text-sm text-zinc-500">
 											VIN: {selectedVehicle.vin}
 										</p>
@@ -559,13 +956,34 @@ export function VehicleList({
 										</p>
 									</div>
 								</div>
-								<button
-									type="button"
-									onClick={() => setSelectedVehicleId(null)}
-									className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
-								>
-									Fechar
-								</button>
+								<div className="flex items-center gap-2">
+									<button
+										type="button"
+										onClick={() => {
+											const next = !selectedVehicle.isBanned;
+											void setVehicleBanned(selectedVehicle._id, next);
+										}}
+										className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+									>
+										{selectedVehicle.isBanned ? "Desbanir" : "Banir"}
+									</button>
+									<button
+										type="button"
+										onClick={() => {
+											void deleteVehicle(selectedVehicle._id);
+										}}
+										className="rounded-xl border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-950/60"
+									>
+										Deletar
+									</button>
+									<button
+										type="button"
+										onClick={() => setSelectedVehicleId(null)}
+										className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+									>
+										Fechar
+									</button>
+								</div>
 							</div>
 
 							<div className="mt-5 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
@@ -612,10 +1030,10 @@ export function VehicleList({
 												<div className="flex items-start justify-between gap-3">
 													<div className="min-w-0">
 														<p className="truncate text-sm font-semibold text-zinc-100">
-															{order.title}
+															{orderTypeLabel(order.type)}
 														</p>
 														<p className="text-sm text-zinc-500">
-															Tipo: {orderTypeLabel(order.type)}
+															{(order.description || "").trim() || "Sem descrição"}
 														</p>
 														<p className="text-sm text-zinc-600">
 															Cliente: {order.clientId?.name || "-"}
@@ -640,6 +1058,109 @@ export function VehicleList({
 										))
 									)}
 								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function orderVehicleLabel(order: OrderItem) {
+	if (!order.vehicleId) return "-";
+	if (typeof order.vehicleId === "string") return "-";
+	const model = order.vehicleId.model || "";
+	const vin = order.vehicleId.vin || order.vehicleId.plate || "";
+	if (!model && !vin) return "-";
+	return vin ? `${model} - ${vin}` : model;
+}
+
+export function HistoryPanel({
+	clients,
+	vehicles,
+	orders,
+}: {
+	clients: ClientItem[];
+	vehicles: VehicleItem[];
+	orders: OrderItem[];
+}) {
+	const [isCreateOrderOpen, setIsCreateOrderOpen] = useState(false);
+
+	useEffect(() => {
+		if (!isCreateOrderOpen) return;
+		function onKeyDown(e: KeyboardEvent) {
+			if (e.key === "Escape") setIsCreateOrderOpen(false);
+		}
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [isCreateOrderOpen]);
+
+	return (
+		<div className="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-4 lg:col-span-1">
+			<div className="mb-4 flex items-center justify-between gap-3">
+				<h2 className="text-sm font-semibold text-zinc-200">Histórico</h2>
+				<button
+					type="button"
+					onClick={() => setIsCreateOrderOpen(true)}
+					className="rounded-xl bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200"
+				>
+					Novo registro
+				</button>
+			</div>
+
+			<div className="space-y-3">
+				{orders.map((order) => (
+					<div
+						key={order._id}
+						className="rounded-xl border border-zinc-900 bg-zinc-950 p-3"
+					>
+						<p className="text-sm font-semibold text-zinc-100">
+							{orderTypeLabel(order.type)}
+						</p>
+						<p className="text-sm text-zinc-500">
+							{(order.description || "").trim() || "Sem descrição"}
+						</p>
+						<p className="text-sm text-zinc-600">
+							Cliente: {order.clientId?.name || "-"}
+						</p>
+						<p className="text-sm text-zinc-600">
+							Veículo: {orderVehicleLabel(order)}
+						</p>
+						<p className="text-sm text-zinc-600">
+							Mecânico:{" "}
+							{order.createdBy?.username ||
+								order.createdBy?.name ||
+								order.createdBy?.discordId ||
+								"-"}
+						</p>
+					</div>
+				))}
+			</div>
+
+			{isCreateOrderOpen ? (
+				<div
+					className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4"
+					onMouseDown={(e) => {
+						if (e.target === e.currentTarget) setIsCreateOrderOpen(false);
+					}}
+				>
+					<div className="mx-auto flex min-h-full items-center justify-center">
+						<div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
+							<div className="flex items-center justify-between gap-4">
+								<h3 className="text-lg font-semibold text-zinc-100">
+									Novo registro
+								</h3>
+								<button
+									type="button"
+									onClick={() => setIsCreateOrderOpen(false)}
+									className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-900"
+								>
+									Fechar
+								</button>
+							</div>
+							<div className="mt-4">
+								<OrderForm clients={clients} vehicles={vehicles} />
 							</div>
 						</div>
 					</div>

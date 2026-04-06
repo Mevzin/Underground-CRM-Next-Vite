@@ -29,6 +29,21 @@ const clientSchema = new Schema(
 			default: "",
 			trim: true,
 		},
+		crew: {
+			type: String,
+			default: "",
+			trim: true,
+			index: true,
+		},
+		isBanned: {
+			type: Boolean,
+			default: false,
+			index: true,
+		},
+		bannedAt: {
+			type: Date,
+			default: null,
+		},
 		createdBy: {
 			type: Types.ObjectId,
 			ref: "User",

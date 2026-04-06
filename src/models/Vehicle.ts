@@ -34,6 +34,15 @@ const vehicleSchema = new Schema(
 			default: "",
 			trim: true,
 		},
+		isBanned: {
+			type: Boolean,
+			default: false,
+			index: true,
+		},
+		bannedAt: {
+			type: Date,
+			default: null,
+		},
 		createdBy: {
 			type: Types.ObjectId,
 			ref: "User",

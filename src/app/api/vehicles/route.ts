@@ -23,6 +23,8 @@ function isAllowedVehicleImageUrl(value: string) {
 			url.protocol === "https:" &&
 			(host === "kappa.lol" ||
 				host.endsWith(".kappa.lol") ||
+				host === "fivemanage.com" ||
+				host.endsWith(".fivemanage.com") ||
 				host === "fivemanager.net" ||
 				host.endsWith(".fivemanager.net") ||
 				host === "fivemanager.com" ||
@@ -42,7 +44,7 @@ const vehicleSchema = z.object({
 		.optional()
 		.default("")
 		.refine((value) => value === "" || isAllowedVehicleImageUrl(value), {
-			message: "Link de imagem inválido (use https://kappa.lol ou https://fivemanager).",
+			message: "Link de imagem inválido (use https://kappa.lol ou https://fivemanage.com).",
 		}),
 	color: z.string().optional().default(""),
 	observations: z.string().optional().default(""),

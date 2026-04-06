@@ -4,9 +4,14 @@ import { requireAuthorizedUser } from "@/lib/auth-guard";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Order } from "@/models/Order";
 
+function orderTypeToTitle(type: "stage_installation" | "removal" | "renewal") {
+	if (type === "stage_installation") return "Instalação de stage";
+	if (type === "removal") return "Remoção";
+	return "Renovação";
+}
+
 const updateOrderSchema = z.object({
 	type: z.enum(["stage_installation", "removal", "renewal"]),
-	title: z.string().min(2),
 	description: z.string().optional().default(""),
 });
 
@@ -61,9 +66,17 @@ export async function PUT(
 		{ $unset: { price: "", status: "" } },
 		{ strict: false },
 	);
-	const order = await Order.findByIdAndUpdate(id, parsed.data, {
-		new: true,
-	}).lean();
+	const order = await Order.findByIdAndUpdate(
+		id,
+		{
+			$set: {
+				type: parsed.data.type,
+				title: orderTypeToTitle(parsed.data.type),
+				description: parsed.data.description,
+			},
+		},
+		{ new: true },
+	).lean();
 
 	if (!order) {
 		return NextResponse.json(

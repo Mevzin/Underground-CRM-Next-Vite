@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ToastProvider } from "@/components/ToastProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "Underground CRM",
-	description: "Gestão de clientes, carros e pedidos",
+  title: "Underground Prodigy",
+  description: "Gestão de clientes, carros e pedidos",
 };
 
 export default function RootLayout({
@@ -24,12 +25,12 @@ export default function RootLayout({
 }>) {
   return (
     <html
-			lang="pt-BR"
-			className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      lang="pt-BR"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-			<body className="min-h-full bg-zinc-950 text-zinc-100">
-				{children}
-			</body>
+      <body className="min-h-full bg-zinc-950 text-zinc-100">
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

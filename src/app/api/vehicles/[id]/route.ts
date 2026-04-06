@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuthorizedUser } from "@/lib/auth-guard";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Vehicle } from "@/models/Vehicle";
+import { Order } from "@/models/Order";
 
 function isAllowedVehicleImageUrl(value: string) {
 	try {
@@ -12,6 +13,8 @@ function isAllowedVehicleImageUrl(value: string) {
 			url.protocol === "https:" &&
 			(host === "kappa.lol" ||
 				host.endsWith(".kappa.lol") ||
+				host === "fivemanage.com" ||
+				host.endsWith(".fivemanage.com") ||
 				host === "fivemanager.net" ||
 				host.endsWith(".fivemanager.net") ||
 				host === "fivemanager.com" ||
@@ -30,10 +33,14 @@ const updateVehicleSchema = z.object({
 		.optional()
 		.default("")
 		.refine((value) => value === "" || isAllowedVehicleImageUrl(value), {
-			message: "Link de imagem inválido (use https://kappa.lol ou https://fivemanager).",
+			message: "Link de imagem inválido (use https://kappa.lol ou https://fivemanage.com).",
 		}),
 	color: z.string().optional().default(""),
 	observations: z.string().optional().default(""),
+});
+
+const patchVehicleSchema = z.object({
+	isBanned: z.boolean(),
 });
 
 export async function GET(
@@ -98,7 +105,7 @@ export async function DELETE(
 
 	const { id } = await context.params;
 	await connectToDatabase();
-	const vehicle = await Vehicle.findByIdAndDelete(id).lean();
+	const vehicle = await Vehicle.findById(id).lean();
 
 	if (!vehicle) {
 		return NextResponse.json(
@@ -107,5 +114,47 @@ export async function DELETE(
 		);
 	}
 
+	await Promise.all([
+		Order.deleteMany({ vehicleId: id }),
+		Vehicle.deleteOne({ _id: id }),
+	]);
+
 	return NextResponse.json({ ok: true });
+}
+
+export async function PATCH(
+	req: NextRequest,
+	context: { params: Promise<{ id: string }> },
+) {
+	const { error } = await requireAuthorizedUser();
+	if (error) return error;
+
+	const { id } = await context.params;
+	const body = await req.json();
+	const parsed = patchVehicleSchema.safeParse(body);
+
+	if (!parsed.success) {
+		return NextResponse.json({ message: parsed.error.flatten() }, { status: 400 });
+	}
+
+	await connectToDatabase();
+	const vehicle = await Vehicle.findByIdAndUpdate(
+		id,
+		{
+			$set: {
+				isBanned: parsed.data.isBanned,
+				bannedAt: parsed.data.isBanned ? new Date() : null,
+			},
+		},
+		{ new: true },
+	).lean();
+
+	if (!vehicle) {
+		return NextResponse.json(
+			{ message: "Veículo não encontrado" },
+			{ status: 404 },
+		);
+	}
+
+	return NextResponse.json(vehicle);
 }
